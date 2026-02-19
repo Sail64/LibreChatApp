@@ -1,95 +1,100 @@
-# LibreChat Android Wrapper (mTLS Support)
+# LibreChatApp
 
-这是一个为 [LibreChat](https://github.com/danny-avila/LibreChat) 定制的 Android 原生壳应用，专为使用 **mTLS (双向 TLS 认证)** 保护的私有部署环境设计。
+> **非官方客户端声明**
+>
+> 本项目是 **LibreChat** 的一个 **非官方 Android 客户端**，仅提供全屏 WebView 封装能力，
+> 方便在 Android 设备上访问你的 LibreChat 服务端。它不隶属于 LibreChat 官方团队。
 
-它通过 Android 原生 WebView 封装了 LibreChat 网页版，完美平衡了 **极致便捷的体验** 与 **企业级的安全性**。
+## 截图
 
-## 🚀 本APP的体验设计
+> 截图展示的是 **LibreChat 的网页界面**，本应用仅做全屏 WebView 封装和免输密码认证。
 
-*   **极致流畅的“开箱即用”体验**：
-    *   告别繁琐的浏览器证书选择弹窗。
-    *   告别每次打开都要重新输入密码的痛苦。
-    *   **只需一次配置**（首次选择证书 + 首次登录），此后每次启动 App **直达聊天界面**，秒开秒用。
-*   **沉浸式的大屏阅读体验**：
-    *   全屏 WebView 设计，最大化利用手机屏幕空间。
-    *   完美适配 LibreChat 的响应式布局，无论是代码块还是长对话，阅读体验远超手机浏览器地址栏遮挡的局促感。
-*   **不妥协的安全性**：
-    *   在享受免密便利的同时，依然由底层 mTLS 证书和 HttpOnly Cookie 守护安全，结合服务端的mTLS双向认证，具有较高的安全性。
+![Screenshot 1](screenshots/Screenshot_20260219_182457_cn.ptdocs.librechatapp.jpg)
+![Screenshot 2](screenshots/Screenshot_20260219_182528_cn.ptdocs.librechatapp.jpg)
 
-## ✨ 主要特性
+---
 
-*   **🔐 mTLS 双向认证支持**：
-    *   深度集成 Android KeyChain API。
-    *   首次访问自动弹出系统证书选择器。
-    *   自动缓存证书别名，后续启动 **零交互自动握手**。
-    *   支持证书过期提醒。
-    *   遇到 400 错误（证书失效）自动清除缓存并提示重新选择。
-*   **⚡ 30 天免密登录**：
-    *   通过 WebView Cookie 持久化机制，配合 LibreChat 的 `refreshToken` 实现长效登录。
-    *   避免了每次打开 App 都要重新输入密码的繁琐。
-*   **🛡️ 安全增强**：
-    *   **域名白名单**：仅允许访问配置的主机域名，拦截所有外部链接（如 GitHub、Google）并跳转至系统浏览器，防止钓鱼攻击。
-    *   **隐私保护**：默认禁用第三方 Cookie，禁用表单密码保存。
-    *   **明文流量禁止**：强制仅允许 HTTPS 连接。
-*   **📂 文件上传**：
-    *   完整支持 LibreChat 的文件上传功能（对接系统文件选择器/相册）。
-*   **🎨 UI 适配**：
-    *   自动适配系统深色/浅色模式（状态栏颜色自动切换）。
-    *   保留系统状态栏，非沉浸式设计，避免遮挡网页内容。
+## 简介
 
-## 🛠️ 部署与配置
+我想要说明一下我做这个项目的背景：
+我经常要在手机上使用，而官方没有APP客户端，在手机上使用有以下几点使用不便：
+1、要输入密码，哪怕是浏览器记录密码，仍然需要有一次登录过程。
+2、LibreChat的网页非常优雅美观，但是放在手机浏览器里，浏览器的地址栏和菜单会占用过多屏幕空间，同时会
+对LibreChat的网页产生干扰。
+3、我把LibreChat部署在我的内网，我部署了一个nginx反向代理服务器，采用mTLS认证的方式，以便加强安全性，
+这就要求手机浏览器能够做到出示客户端证书和缓存证书（别名），但目前只有Chrome/firefox等大型浏览器能够实现
+这一点，但是他们太重了。
 
-### 1. 环境要求
-*   **服务端**：已部署 LibreChat，并配置了 Nginx 反向代理启用 mTLS (`ssl_verify_client on`)。
-*   **客户端**：Android 10 (API 29) 及以上版本推荐。
-*   **证书**：需在 Android 设备上安装客户端证书（`.p12` 或 `.pfx` 格式），通常在“设置 -> 安全 -> 加密与凭据 -> 安装证书”中安装。
+基于这些背景我决定开发一款自己的轻量级APP，LibreChatApp 就是这样一款轻量的 Android WebView 客户端，
+访问自部署的 LibreChat 服务端。它支持配置服务器地址、mTLS 客户端证书选择与缓存、证书过期提醒，以及文件
+的上传和下载。
 
-### 2. 修改目标地址
-本项目默认配置为示例地址。在编译前，请务必修改 `app/src/main/java/cn/ptdocs/librechatapp/AppConfig.kt` 文件：
+---
 
-```kotlin
-object AppConfig {
-    // 修改为您自己的 LibreChat 域名
-    const val HOST = "your-librechat-domain.com" 
-    
-    // 修改为您的端口号（如果是 443 标准端口也请填写）
-    const val PORT = 443
-    
-    // 自动生成 Base URL
-    const val BASE_URL = "https://$HOST:$PORT"
-}
+## 功能特性
+
+- **服务器地址配置**（首次启动设置，可随时更改）
+- **mTLS 客户端证书支持**（选择证书、缓存 alias、证书过期提醒）
+- **证书失效自动清理**（证书到期前一个月有更换证书提示，同时支持服务端吊销证书的处理）
+- **WebView 安全配置**（禁止混合内容、关闭第三方 Cookie）
+- **文件上传、下载支持**（HTTP、data URL、blob URL，保存到系统下载目录）
+
+---
+
+## 使用说明
+
+### 1. 设置服务器地址
+首次启动会弹窗要求设置服务器地址。之后可以在登录页或无 Cookie 时点击底部“设置服务器地址”进行修改。
+
+### 2. mTLS 客户端证书
+如果服务端启用了双向 TLS，应用会弹出系统证书选择器。选择后会缓存证书 alias，且会在证书即将过期时提示。
+
+### 3. 文件上传和下载
+支持对话时上传文件，支持导出记录时的文件下载。
+
+---
+
+## 构建与发布
+
+### 开发构建
+```bash
+./gradlew assembleDebug
 ```
 
-### 3. 编译与安装
-1. 使用 Android Studio 打开本项目。
-2. 等待 Gradle Sync 完成。
-3. 连接 Android 设备或启动模拟器。
-4. 点击 **Run 'app'** 进行编译安装。
+### 生成签名文件
+```bash
+./generate_keystore.sh
+```
 
-## 📝 使用指南
+### 构建 Release
+```bash
+./build_release.sh
+```
+构建成功后会生成 `release.apk`。
 
-1. **首次启动**：
-   - App 会发起 mTLS 握手请求。
-   - Android 系统会弹出“选择证书”对话框。
-   - 选择您已安装的客户端证书，点击“允许”。
-   - App 将自动记住您的选择。
+---
 
-2. **登录**：
-   - 输入 LibreChat 账号密码登录。
-   - 勾选“保持登录”或依赖服务端的 Refresh Token 策略。
+## 项目结构
 
-3. **日常使用**：
-   - 下次启动 App 时，将自动完成 mTLS 握手并恢复登录状态，直接进入聊天界面。
+```
+app/src/main/java/cn/ptdocs/librechatapp/
+├── MainActivity.kt               # WebView 容器与设置入口
+├── storage/Prefs.kt              # SharedPreferences（服务器地址、证书 alias）
+└── web/
+    ├── AppWebChromeClient.kt     # 文件选择回调
+    ├── DownloadHandler.kt        # 下载处理（HTTP / data / blob）
+    ├── MtlsWebViewClient.kt      # mTLS 证书逻辑、外链处理、证书过期提示
+    └── WebViewConfigurator.kt    # WebView 安全配置
+```
 
-## ⚠️ 注意事项
+---
 
-*   **证书管理**：本 App 不直接存储证书私钥，而是通过 Android KeyChain API 引用系统凭据。这是最安全的做法。
-*   **外部链接**：为了安全起见，聊天内容中的外部链接（如 AI 生成的参考链接）点击后会跳转到手机默认浏览器打开，不会在 App 内部加载。
+## 权限
 
-## 🤝 贡献
+- `android.permission.INTERNET`
 
-欢迎提交 Issue 或 Pull Request 来改进本项目。
+---
 
-## 📄 许可证
+## License
 
-[MIT License](LICENSE)
+MIT License. 详见 [LICENSE](LICENSE)。
