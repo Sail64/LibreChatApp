@@ -3,6 +3,7 @@ package cn.ptdocs.librechatapp.web
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.net.http.SslError
 import android.security.KeyChain
 import android.util.Log
 import android.webkit.ClientCertRequest
@@ -10,12 +11,15 @@ import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.SslErrorHandler
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import cn.ptdocs.librechatapp.storage.Prefs
+import java.net.URL
 import java.security.cert.X509Certificate
 import java.util.Date
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HttpsURLConnection
 
 import android.widget.Toast
 
@@ -27,9 +31,19 @@ class MtlsWebViewClient(
     companion object {
         private const val TAG = "MtlsWebViewClient"
         private const val CERT_CLEAR_COOLDOWN_MS = 5000L
+
+        private const val CLIENT_CERT_WARN_DAYS = 30L
+        private const val SERVER_CERT_WARN_DAYS = 14L
+
+        private const val CLIENT_CERT_LABEL = "客户端证书（注意：非服务端证书）"
+        private const val SERVER_CERT_LABEL = "服务端证书（注意：非客户端证书）"
+
+        private fun certExpiredMsg(label: String) = "${label}已过期，请立即更新。"
+        private fun certExpiringMsg(label: String, days: Long) = "${label}将在 $days 天后过期，请及时联系管理员更新。"
     }
 
     private var hasShownExpiryWarning = false
+    private var hasShownServerExpiryWarning = false
     private var lastCertClearTime = 0L
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -61,22 +75,70 @@ class MtlsWebViewClient(
 
         Log.d(TAG, "Certificate expires in $daysLeft days")
 
-        if (daysLeft < 30) {
+        if (daysLeft < CLIENT_CERT_WARN_DAYS) {
             hasShownExpiryWarning = true
             activity.runOnUiThread {
                 val message = if (daysLeft < 0) {
-                    "您的证书已过期，请立即更新。"
+                    certExpiredMsg(CLIENT_CERT_LABEL)
                 } else {
-                    "您的客户端证书将在 $daysLeft 天后过期，请及时联系管理员更新。"
+                    certExpiringMsg(CLIENT_CERT_LABEL, daysLeft)
                 }
                 
                 AlertDialog.Builder(activity)
-                    .setTitle("证书提醒")
+                    .setTitle("证书到期提醒")
                     .setMessage(message)
                     .setPositiveButton("确定", null)
                     .show()
             }
         }
+    }
+
+    private fun checkServerCertificateExpiry(urlString: String) {
+        if (hasShownServerExpiryWarning) return
+
+        Thread {
+            try {
+                val url = URL(urlString)
+                if (url.protocol != "https") return@Thread
+
+                val conn = url.openConnection() as HttpsURLConnection
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                conn.connect()
+
+                val certs = conn.serverCertificates
+                conn.disconnect()
+
+                if (certs.isNotEmpty() && certs[0] is X509Certificate) {
+                    val serverCert = certs[0] as X509Certificate
+                    val expiryDate = serverCert.notAfter
+                    val now = Date()
+                    val diff = expiryDate.time - now.time
+                    val daysLeft = TimeUnit.MILLISECONDS.toDays(diff)
+
+                    Log.d(TAG, "Server certificate expires in $daysLeft days")
+
+                    if (daysLeft < SERVER_CERT_WARN_DAYS) {
+                        hasShownServerExpiryWarning = true
+                        activity.runOnUiThread {
+                            val message = if (daysLeft < 0) {
+                                certExpiredMsg(SERVER_CERT_LABEL)
+                            } else {
+                                certExpiringMsg(SERVER_CERT_LABEL, daysLeft)
+                            }
+
+                            AlertDialog.Builder(activity)
+                                .setTitle("证书到期提醒")
+                                .setMessage(message)
+                                .setPositiveButton("确定", null)
+                                .show()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to check server certificate expiry: ${e.message}")
+            }
+        }.start()
     }
 
     override fun onReceivedClientCertRequest(view: WebView, request: ClientCertRequest) {
@@ -149,6 +211,60 @@ class MtlsWebViewClient(
         super.onReceivedError(view, request, error)
     }
 
+    override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+        Log.e(TAG, "onReceivedSslError: primaryError=${error.primaryError}, url=${error.url}")
+
+        val sslCert = error.certificate
+        if (sslCert != null) {
+            try {
+                val expiryDate = sslCert.validNotAfterDate
+                val now = Date()
+                val diff = expiryDate.time - now.time
+                val daysLeft = TimeUnit.MILLISECONDS.toDays(diff)
+
+                Log.d(TAG, "SSL error - server certificate expires in $daysLeft days, primaryError=${error.primaryError}")
+
+                if (daysLeft < SERVER_CERT_WARN_DAYS || error.primaryError == SslError.SSL_EXPIRED) {
+                    if (!hasShownServerExpiryWarning) {
+                        hasShownServerExpiryWarning = true
+                        activity.runOnUiThread {
+                            val message = if (daysLeft < 0 || error.primaryError == SslError.SSL_EXPIRED) {
+                                certExpiredMsg(SERVER_CERT_LABEL)
+                            } else {
+                                certExpiringMsg(SERVER_CERT_LABEL, daysLeft)
+                            }
+
+                            AlertDialog.Builder(activity)
+                                .setTitle("证书到期提醒")
+                                .setMessage(message)
+                                .setPositiveButton("确定", null)
+                                .show()
+
+                            onSettingsVisibilityChange(true)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to parse SSL certificate: ${e.message}")
+            }
+        }
+
+        if (!hasShownServerExpiryWarning) {
+            hasShownServerExpiryWarning = true
+            activity.runOnUiThread {
+                AlertDialog.Builder(activity)
+                    .setTitle("证书到期提醒")
+                    .setMessage("${SERVER_CERT_LABEL}无效，请检查服务器配置。")
+                    .setPositiveButton("确定", null)
+                    .show()
+
+                onSettingsVisibilityChange(true)
+            }
+        }
+
+        handler.cancel()
+    }
+
     override fun onReceivedHttpError(
         view: WebView,
         request: WebResourceRequest,
@@ -171,7 +287,7 @@ class MtlsWebViewClient(
                 WebView.clearClientCertPreferences {
                     Log.d(TAG, "Client cert preferences cleared")
                     activity.runOnUiThread {
-                        Toast.makeText(activity, "客户端证书已失效，请重新选择", Toast.LENGTH_LONG).show()
+                        Toast.makeText(activity, "${CLIENT_CERT_LABEL}已失效，请重新选择", Toast.LENGTH_LONG).show()
                         view.reload()
                     }
                 }
@@ -185,6 +301,8 @@ class MtlsWebViewClient(
         super.onPageFinished(view, url)
         CookieManager.getInstance().flush()
         Log.d(TAG, "Page finished, cookies flushed: $url")
+
+        checkServerCertificateExpiry(url)
 
         val cookies = CookieManager.getInstance().getCookie(url)
         val isLoginPage = url.contains("/login")
